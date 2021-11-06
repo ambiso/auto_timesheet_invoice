@@ -176,17 +176,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let price = rate * rounded_hours;
         total += price;
         total_hours += rounded_hours;
-        println!("{i} & {description} & {duration} & hrs & €{rate} & 0\\% & €{full_price} & €0.00 & €{full_price} \\\\",
+        println!("{i}: {description} ({duration} hrs)",
             i=i+1,
             description=description.replace("&", "\\&"),
-            rate=ratio_to_string(rate),
             duration=ratio_to_string(rounded_hours),
-            full_price=ratio_to_string(price),
         );
     }
-    println!(" &  &  &  & VAT & 0\\% & €{total} & €0.00 & €{total} \\\\\\hhline{{~~~~-----}} ", total=ratio_to_string(total));
-    println!(" &  &  &  & Total & EUR & €{total} & €0.00 & €{total} \\\\\\hhline{{~~~~=====}}", total=ratio_to_string(total));
-
+    println!("");
     println!("Total hours: {}", ratio_to_string(total_hours));
     Ok(())
 }
