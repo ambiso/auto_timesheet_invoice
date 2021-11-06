@@ -178,7 +178,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         total_hours += rounded_hours;
         println!("{i}: {description} ({duration} hrs)",
             i=i+1,
-            description=description.replace("&", "\\&"),
+            description=description,
             duration=ratio_to_string(rounded_hours),
         );
     }
