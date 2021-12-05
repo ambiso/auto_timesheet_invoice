@@ -42,6 +42,35 @@ fn ratio_to_string(r: Rational64) -> String {
     format!("{}.{:02}", integer_part, decimal_part)
 }
 
+fn with_confirm<T>(msg: &str, default: Option<bool>, f: impl Fn() -> T) -> Option<T> {
+    println!("{} {}", msg, match default {
+        Some(true) => "[Y/n]",
+        Some(false) => "[y/N]",
+        None => "[y/n]",
+    });
+    
+    loop {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+        line = line.to_lowercase();
+        if line.len() > 0 {
+            let first = line.chars().take(1).last().unwrap();
+            if first == 'y' {
+                return Some(f());
+            } else if first == 'n' {
+                break;
+            }
+        } else {
+            match default {
+                Some(true) => return Some(f()),
+                Some(false) => break,
+                None => {},
+            };
+        }
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut f = File::open("conf/config.toml").await?;
@@ -50,8 +79,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = toml::from_slice::<Config>(&buf)?;
     let client = reqwest::Client::new();
 
-    let url = accounting::freefinance::oauth_url(true, config.freefinance.app_key.as_str(), "", "");
-    println!("{}", url);
+    // let url = accounting::freefinance::oauth_url(true, config.freefinance.app_key.as_str(), "", "");
+    // println!("{}", url);
     //return Ok(());
 
     let req = client.request(reqwest::Method::GET, "https://api.track.toggl.com/api/v8/me").basic_auth(&config.toggl.api_token, Some("api_token"));
@@ -160,13 +189,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let deviation = sorted_by_duration.iter().map(|x| (x.1 - x.0) * config.rate).sum::<Rational64>();
     dbg!(deviation);
 
-    billed_bucket.transaction(|tx| {
-        for id in &to_bill {
-            tx.set(kv::Integer::from(*id as u64), Json(true))?;
-        }
-        Ok(())
-    })?;
-    
     let rate = Rational64::from(config.rate) / 100;
     let mut total = Rational64::from(0);
     let mut total_hours = Rational64::from(0);
@@ -184,5 +206,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     println!("");
     println!("Total hours: {}", ratio_to_string(total_hours));
+
+    with_confirm("Commit changes to database?", Some(false), || {
+        billed_bucket.transaction(|tx| {
+            for id in &to_bill {
+                tx.set(kv::Integer::from(*id as u64), Json(true))?;
+            }
+            Ok(())
+        })?;
+        Ok::<_, Box<dyn Error>>(())
+    }).transpose()?;
+    
     Ok(())
 }
