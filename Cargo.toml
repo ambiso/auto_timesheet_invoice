@@ -14,4 +14,5 @@ reqwest = { version = "0.11.4", features = ["json"] }
 chrono = "0.4.19"
 chrono-tz = "0.6"
 num-rational = "0.4.0"
-kv = { version = "0.22.0", features = ["json-value"] }
+kv = { version = "0.23.1", features = ["json-value"] }
+sailfish = "0.4.0"

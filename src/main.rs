@@ -1,10 +1,11 @@
 #![feature(entry_insert)]
 
-use std::{collections::{BTreeMap, HashMap}, error::Error, str::FromStr};
+use std::{collections::{BTreeMap, HashMap}, error::Error, str::FromStr, path::Path};
 use num_rational::Rational64;
 use reqwest::Url;
+use sailfish::TemplateOnce;
 use serde::Deserialize;
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}, process::Command};
 use serde_json::Value;
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone};
 extern crate chrono_tz;
@@ -71,6 +72,14 @@ fn with_confirm<T>(msg: &str, default: Option<bool>, f: impl Fn() -> T) -> Optio
     None
 }
 
+#[derive(TemplateOnce)]
+#[template(path = "timesheet.tex.stpl")]
+struct HelloTemplate {
+    table_latex: String,
+    invoice_number: u64,
+    total: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut f = File::open("conf/config.toml").await?;
@@ -121,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for entry in response {
         let id = entry["id"].as_i64().expect("Expected time entry ID");
 
-        if billed_bucket.get(kv::Integer::from(id as u64)).expect("Could not read store").map(|x| x.into_inner()).unwrap_or(false) {
+        if billed_bucket.get(&kv::Integer::from(id as u64)).expect("Could not read store").map(|x| x.into_inner()).unwrap_or(false) {
             continue;
         }
 
@@ -186,31 +195,60 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }).collect();
     sorted_by_duration.sort_by(|a, b| b.partial_cmp(a).unwrap());
 
-    let deviation = sorted_by_duration.iter().map(|x| (x.1 - x.0) * config.rate).sum::<Rational64>();
-    dbg!(deviation);
-
     let rate = Rational64::from(config.rate) / 100;
+
     let mut total = Rational64::from(0);
     let mut total_hours = Rational64::from(0);
+    let mut latex_string = String::new();
     for (i, x) in sorted_by_duration.iter().enumerate() {
         let rounded_hours = x.1;
         let description = x.2;
         let price = rate * rounded_hours;
         total += price;
         total_hours += rounded_hours;
-        println!("{i}: {description} ({duration} hrs)",
+        latex_string += &format!("{i}& {description} & {duration} & hrs \\\\",
             i=i+1,
-            description=description,
+            description=description.replace("&", "\\&"),
             duration=ratio_to_string(rounded_hours),
         );
     }
+
+    let total_hours = ratio_to_string(total_hours);
+
+    let ctx = HelloTemplate {
+        table_latex: latex_string,
+        invoice_number: 8,
+        total: total_hours.clone(),
+    };
+
+    let render_result = ctx.render_once().unwrap();
+
+    let output_path = Path::new("output");
+    let fname = output_path.join("output.tex");
+    let mut file = File::create(fname).await?;
+
+    file.write_all(render_result.as_bytes()).await?;
+
+    Command::new("latexmk")
+        .arg("-pdf")
+        .arg(output_path)
+        .current_dir("output")
+        .spawn()
+        .expect("latexmk failed to start")
+        .wait()
+        .await
+        .expect("latexmk failed to run");
+
     println!("");
-    println!("Total hours: {}", ratio_to_string(total_hours));
+    let deviation = sorted_by_duration.iter().map(|x| (x.1 - x.0) * rate).sum::<Rational64>();
+    println!("Gross difference after rounding: {}€", ratio_to_string(deviation));
+    println!("Total hours: {}", total_hours);
+
 
     with_confirm("Commit changes to database?", Some(false), || {
         billed_bucket.transaction(|tx| {
             for id in &to_bill {
-                tx.set(kv::Integer::from(*id as u64), Json(true))?;
+                tx.set(&kv::Integer::from(*id as u64), &Json(true))?;
             }
             Ok(())
         })?;
